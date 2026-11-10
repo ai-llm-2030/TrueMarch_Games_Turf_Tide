@@ -16,6 +16,13 @@
   <img src="assets/screenshot-play.png" alt="Turf Tide — gameplay" width="820">
 </p>
 
+## More screenshots
+
+<table>
+<tr><td width="50%"><img src="assets/screenshot-map.png" alt="The ink isles"><br><sub>The ink isles</sub></td><td width="50%"><img src="assets/screenshot-stages.png" alt="Chalk Yard's stages"><br><sub>Chalk Yard's stages</sub></td></tr>
+<tr><td width="50%"><img src="assets/screenshot-shop.png" alt="The Paint Shop"><br><sub>The Paint Shop</sub></td><td width="50%"><img src="assets/screenshot-results.png" alt="Splatted: a stage result"><br><sub>Splatted: a stage result</sub></td></tr>
+</table>
+
 ## Controls
 
 | Keys | Action |
