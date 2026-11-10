@@ -1,0 +1,335 @@
+/*
+ * Shared chrome for the games in this folder.
+ *
+ * Each game is a standalone HTML file loaded in an iframe from the games dialog
+ * (components/GamesMenu.tsx). They are separate documents on purpose: a game is
+ * a render loop with its own keyboard handling, and closing the dialog unmounts
+ * the frame, which stops every timer, listener and audio context it owns
+ * outright. Nothing has to be torn down by hand, so nothing can be forgotten.
+ *
+ * That also means none of the app's CSS reaches them — hence this file, which
+ * is the whole of what they share. Adding a game is adding one HTML file here
+ * and one line to lib/games.ts.
+ *
+ * The palette follows the app's (Google Translate's, see tailwind.config.js) so
+ * the frame does not look like a different website inside the dialog. The theme
+ * arrives as ?theme=dark on the URL rather than through prefers-color-scheme,
+ * because the app has its own switch and the two must agree.
+ */
+
+:root {
+  /*
+   * The play colours, named by hue rather than by role.
+   *
+   * On :root and NOT on `body.vivid` where the rest of the arcade palette
+   * lives, and that is not a tidiness preference — `Arcade.css()` resolves
+   * custom properties against `document.documentElement`. A var declared on
+   * <body> resolves to the empty string there, canvas silently ignores an
+   * invalid fillStyle and keeps whatever colour it had last, and the game
+   * renders in blacks and browns while looking, in the stylesheet, entirely
+   * correct. That is exactly how the first pass of the vivid games shipped
+   * their sunset over a black commando.
+   *
+   * Games reach for these instead of hard-coding hex, so the whole shelf can be
+   * re-tuned from one place. Chosen to stay apart from each other at 24px on
+   * the indigo below: the test was six squares side by side, not a colour wheel.
+   */
+  --v-pink: #ff2d6f;
+  --v-orange: #ff8a3d;
+  --v-yellow: #ffd23f;
+  --v-lime: #a6ff4d;
+  --v-green: #3ddc84;
+  --v-cyan: #22e0e0;
+  --v-blue: #4d9bff;
+  --v-violet: #a06bff;
+  --v-white: #ffffff;
+
+  --bg: #ffffff;
+  --panel: #f0f4f9;
+  --line: #e1e3e1;
+  --ink: #1f1f1f;
+  --dim: #5f6368;
+  --accent: #0b57d0;
+  --accent-soft: #d3e3fd;
+  --good: #1e8e3e;
+  --warn: #d93025;
+  --shadow: 0 1px 3px rgb(0 0 0 / 0.12);
+}
+
+[data-theme='dark'] {
+  --bg: #131314;
+  --panel: #1e1f20;
+  --line: #444746;
+  --ink: #e3e3e3;
+  --dim: #9aa0a6;
+  --accent: #a8c7fa;
+  --accent-soft: #0842a0;
+  --good: #81c995;
+  --warn: #f28b82;
+  --shadow: none;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  height: 100%;
+  background: var(--bg);
+  color: var(--ink);
+  font-family: Inter, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  /* A game reads arrow keys and taps; the page itself must not also scroll,
+     zoom or select text while it does. */
+  overflow: hidden;
+  overscroll-behavior: none;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.stage {
+  /* Fast repeat taps must never double-tap-zoom the frame. */
+  touch-action: manipulation;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 14px;
+}
+
+/* ── The score row ───────────────────────────────────────────────────────── */
+
+.hud {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  font-size: 13px;
+  color: var(--dim);
+  letter-spacing: 0.01em;
+}
+.hud b {
+  display: inline-block;
+  min-width: 1.6em;
+  font-size: 15px;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink);
+}
+.hud .sep { width: 1px; height: 16px; background: var(--line); }
+/* Each item stays one line ("You 18%", not "You 18" over "%"), and a phone gets
+   a tighter row so four items fit in 356px without wrapping. */
+.hud > * { white-space: nowrap; }
+@media (max-width: 420px) {
+  .hud { gap: 10px; font-size: 12px; }
+  .hud b { font-size: 14px; min-width: 1.2em; }
+}
+
+/* ── The playfield ───────────────────────────────────────────────────────── */
+
+/*
+ * `min-height: 0` is load-bearing: the stage is a flex column, and without it a
+ * canvas taller than the dialog refuses to shrink and pushes the hint line out
+ * of the frame instead of scaling down.
+ */
+.field {
+  position: relative;
+  min-height: 0;
+  flex: 1 1 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+}
+
+/*
+ * Scaled up to whatever room the dialog gives it, not pinned at its logical
+ * size. A 640x360 playfield sitting in the middle of a 960px dialog with white
+ * space all round reads as a broken embed rather than as a game.
+ *
+ * `aspect-ratio` is set inline by Arcade.fit from the logical size, so the
+ * proportions hold at any dialog size and the drawing code keeps working in the
+ * one coordinate system it was written in.
+ */
+canvas {
+  display: block;
+  height: 100%;
+  width: auto;
+  max-width: 100%;
+  border-radius: 14px;
+  background: var(--panel);
+  box-shadow: var(--shadow);
+  touch-action: none;
+}
+
+/*
+ * The fix for a stretched playfield on a phone.
+ *
+ * `height: 100%; width: auto; max-width: 100%` above is right while the field
+ * is WIDER than the game (a landscape dialog): the height leads and the width
+ * follows the aspect ratio. In a portrait phone frame the width runs out
+ * first, `max-width` clamps it, and the height stays at 100% — the explicit
+ * width and height then beat `aspect-ratio`, and every block, brick and bubble
+ * is drawn tall and thin (measured: a square Snake board at 328x635).
+ *
+ * The field becomes a size container and the canvas takes the LARGEST box of
+ * its own proportions that fits it: min(field width, field height x ratio).
+ * Only for canvases sized by Arcade.fit (class `arcade-fit`, `--ar` set), so a
+ * game with its own canvas rules keeps them.
+ */
+@supports (width: 1cqw) {
+  .field:has(> canvas.arcade-fit) { container-type: size; }
+  .field > canvas.arcade-fit {
+    width: min(100cqw, 100cqh * var(--ar, 1));
+    height: auto;
+    max-width: none;
+  }
+}
+
+.rotate-tip {
+  position: fixed; left: 50%; top: 10px; z-index: 50;
+  transform: translateX(-50%);
+  max-width: 90vw; padding: 7px 14px; border-radius: 999px;
+  background: rgb(17 24 39 / 0.85); color: #fff;
+  font-size: 12px; white-space: nowrap;
+  pointer-events: none; transition: opacity 0.5s;
+}
+.rotate-tip.gone { opacity: 0; }
+
+.board {
+  background: var(--panel);
+  border-radius: 14px;
+  padding: 12px;
+  box-shadow: var(--shadow);
+}
+
+.hint {
+  margin: 0;
+  font-size: 12px;
+  color: var(--dim);
+  text-align: center;
+}
+.hint kbd {
+  font: inherit;
+  font-size: 11px;
+  border: 1px solid var(--line);
+  border-bottom-width: 2px;
+  border-radius: 5px;
+  padding: 1px 5px;
+  color: var(--ink);
+}
+
+/* ── Start / paused / game-over ──────────────────────────────────────────── */
+
+.overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--bg) 82%, transparent);
+  backdrop-filter: blur(2px);
+  text-align: center;
+  padding: 20px;
+}
+.overlay[hidden] { display: none; }
+.overlay h1 { margin: 0; font-size: 22px; font-weight: 600; letter-spacing: -0.01em; }
+.overlay p  { margin: 0; font-size: 13px; color: var(--dim); max-width: 34ch; line-height: 1.5; }
+
+.btn {
+  font: inherit;
+  font-size: 14px;
+  font-weight: 500;
+  padding: 9px 20px;
+  border-radius: 999px;
+  border: 0;
+  background: var(--accent);
+  color: var(--bg);
+  cursor: pointer;
+  transition: filter .12s ease;
+}
+[data-theme='dark'] .btn { color: #062e6f; }
+.btn:hover { filter: brightness(1.08); }
+.btn:active { transform: translateY(1px); }
+.btn.ghost {
+  background: transparent;
+  color: var(--dim);
+  border: 1px solid var(--line);
+}
+
+/* ── Touch controls, shown only where there is no keyboard ───────────────── */
+
+.pad { display: none; gap: 8px; touch-action: manipulation; }
+.pad button {
+  /* No double-tap zoom, no iOS long-press callout on a held button. */
+  touch-action: manipulation;
+  -webkit-touch-callout: none;
+  width: 52px; height: 46px;
+  font: inherit; font-size: 17px;
+  border-radius: 12px;
+  border: 1px solid var(--line);
+  background: var(--panel);
+  color: var(--ink);
+  cursor: pointer;
+}
+/* The phone half of a hint: `.keys-only` is the desktop wording, `.touch-only`
+   the same sentence for a finger. Exactly one of the two is ever shown. */
+.touch-only { display: none; }
+@media (hover: none) and (pointer: coarse) {
+  .pad { display: flex; }
+  .hint.keys-only { display: none; }
+  .touch-only { display: revert; }
+  .hint.touch-only { display: block; }
+  /* A finger-sized start / Play again. */
+  .overlay .btn { min-height: 44px; }
+}
+
+/* ══ The vivid shelf ═══════════════════════════════════════════════════════
+ *
+ * Everything above dresses a game in the app's own palette — Google Translate's
+ * greys, one blue accent — so the frame does not look like a different website
+ * inside the dialog. That was the right call for the first eighteen and the
+ * wrong one for an arcade: read down the shelf and they were eighteen grey
+ * rectangles, which is exactly the complaint that produced this block.
+ *
+ * A game marked `<body class="vivid">` opts out. It keeps the same layout, HUD
+ * and overlay — one set of chrome, not two — and swaps the palette underneath
+ * for an arcade-cabinet one: deep indigo, saturated everything, and the SAME
+ * colours in both themes. That last part is deliberate. A neon game does not
+ * have a light mode; forcing one produces washed-out pastels that read as a
+ * rendering bug. The dialog around it still follows the app's theme, so the
+ * frame reads as a screen embedded in the page rather than as a broken skin.
+ */
+
+body.vivid {
+  --bg: #12042e;        /* the cabinet: a deep indigo, never black */
+  --panel: #1d0a4a;     /* the screen inside it */
+  --line: #45219b;
+  --ink: #ffffff;
+  --dim: #b9a6ef;
+  --accent: #ffd23f;    /* the button you press to start */
+  --accent-soft: #3a1780;
+  --good: #3ddc84;
+  --warn: #ff2d6f;
+  --shadow: 0 8px 30px rgb(0 0 0 / 0.45);
+
+  background:
+    radial-gradient(120% 90% at 50% -10%, #3b1090 0%, transparent 60%),
+    radial-gradient(90% 70% at 100% 110%, #7a1a6a 0%, transparent 55%),
+    #12042e;
+}
+
+/* The playfield on a vivid game is a lit screen: a soft rim of its own light,
+   because a saturated rectangle sitting flat on a saturated page has no edge. */
+body.vivid canvas,
+body.vivid .board {
+  background: #14063a;
+  box-shadow: 0 0 0 1px rgb(255 255 255 / 0.08), 0 10px 34px rgb(0 0 0 / 0.5);
+}
+
+body.vivid .btn { color: #2a0b52; font-weight: 600; }
+body.vivid .hud b { text-shadow: 0 0 12px rgb(255 210 63 / 0.35); }
+body.vivid .hint kbd { border-color: #5b31c0; }
+body.vivid .pad button { background: #24106b; border-color: #5b31c0; color: #fff; }
